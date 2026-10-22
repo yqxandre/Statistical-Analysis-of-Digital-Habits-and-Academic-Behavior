@@ -1,0 +1,164 @@
+---
+title: "DSA211 G2 - Group 2 Project Code"
+format: html
+editor: visual
+---
+
+# DSA211 G2 - Group 2 Project Code
+
+## Exploratory Data Analysis (EDA)
+
+```{r}
+data <- read.csv("student_productivity_distraction_dataset_20000.csv", stringsAsFactors = TRUE)
+# remove student_id
+data <- data[, -1]
+# dimensions and data types of variables
+str(data)
+
+# summary measures of all columns 
+summary(data)
+
+# confirm our dataset has no NA values
+colSums(is.na(data))
+
+plots <- function(col) {
+  if (is.numeric(data[[col]]) == TRUE) {
+    boxplot(data[[col]], main = paste("Box plot of", col), ylab = col)
+    hist(data[[col]], main = paste("Distribution of", col), xlab = col, ylab = "count")
+  } else {
+      plot(data[[col]], main = paste("Box plot of", col), xlab = col, ylab = "count")
+  }
+}
+
+lapply(colnames(data), FUN = plots)
+
+# correlation matrix for all variables but gender
+corr_mat <- round(cor(data[, -2]), 2)
+heatmap(corr_mat, Rowv = NA, Colv = NA, scale = "none", add.expr = text(expand.grid(1:ncol(corr_mat), 1:nrow(corr_mat)), labels = as.vector(corr_mat), cex = 0.5))
+```
+
+## Regression Modelling
+
+```{r}
+# obtain baseline linear regression model
+M1 <- lm(productivity_score ~ . - gender, data = data)
+summary(M1)
+
+# determine the significance of the dummy variable
+dummy <- lm(productivity_score ~ gender, data = data)
+summary(dummy)
+
+# exclude final_grade and assignments_completed
+M2 <- lm(productivity_score ~ . - gender - assignments_completed - final_grade, data = data)
+summary(M2)
+
+# exclude final_grade, assignments_completed, focus_score and attendance_percentage
+M2 <- lm(productivity_score ~ . - gender - assignments_completed - final_grade - focus_score - attendance_percentage, data = data)
+summary(M2)
+```
+
+## Model Diagnostics
+
+```{r}
+# Scatter Plots
+plot(data$study_hours_per_day, data$productivity_score,
+     main = "Relationship between productivity and study hours",
+     xlab = "Study hours per day", ylab = "Productivity score",
+     cex = 0.3)
+
+plot(data$sleep_hours, data$productivity_score,
+     main = "Relationship between productivity and sleep hours",
+     xlab = "Sleep hours", ylab = "Productivity score", cex = 0.3)
+
+plot(data$phone_usage_hours, data$productivity_score,
+     main = "Relationship between productivity and phone usage",
+     xlab = "Phone usage hours", ylab = "Productivity score", cex = 0.3)
+
+plot(data$stress_level, data$productivity_score,
+     main = "Relationship between productivity and stress level",
+     xlab = "Stress level", ylab = "Productivity score", cex = 0.3)
+
+boxplot(productivity_score ~ stress_level, data = data,
+        main = "Relationship between productivity and stress level",
+        xlab = "Stress level", ylab = "Productivity score",
+        col = "lightblue")
+
+# Assumption Checking - Residual Analysis
+
+# Residuals vs Fitted Values (linearity + constant variance)
+plot(fitted(M2), resid(M2),
+     main = "Relationship between residuals and fitted values",
+     xlab = "Fitted values", ylab = "Residuals",
+     cex = 0.3)
+abline(h = 0, col = "red")
+abline(h = c(-16.5, 16.5), col = "blue", lty = 2)
+
+# Residuals vs each predictor
+plot(data$study_hours_per_day, residuals(M2),
+     main = "Relationship between residuals and study hours",
+     xlab = "Study hours per day", ylab = "Residuals", cex = 0.3)
+
+plot(data$sleep_hours, residuals(M2),
+     main = "Relationship between residuals and sleep hours",
+     xlab = "Sleep hours", ylab = "Residuals", cex = 0.3)
+
+plot(data$phone_usage_hours, residuals(M2),
+     main = "Relationship between residuals and phone usage",
+     xlab = "Phone usage hours", ylab = "Residuals", cex = 0.3)
+
+plot(data$stress_level, residuals(M2),
+     main = "Relationship between residuals and stress level",
+     xlab = "Stress level", ylab = "Residuals", cex = 0.3)
+
+# Normality check using fitdistrplus
+library(fitdistrplus)
+fnorm <- fitdist(residuals(M2), "norm")
+result <- gofstat(fnorm, discrete = FALSE)
+result
+summary(fnorm)
+plot(fnorm)
+
+# Multicollinearity Diagnosis (VIF)
+library(car)
+vif(M2)
+```
+
+## Regularization
+
+```{r}
+# LASSO regression
+library(glmnet)
+set.seed(2345)
+
+# 80/20 training-test split of the dataset
+train <- sample(1:nrow(data), 0.8*nrow(data))
+test <- -train
+data.train <- data[train, ]
+data.test <- data[test, ]
+ols.train <- lm(productivity_score ~ . - gender - assignments_completed - final_grade, data = data.train)
+ols.pred <- predict(ols.train, data.test)
+ols_mse <- mean((data.test$productivity_score-ols.pred)^2)
+ols_mse
+ols.full <- lm(productivity_score ~ . - gender - assignments_completed - final_grade, data = data)
+summary(ols.full)
+coef(ols.full)
+
+# Lasso
+train.x <- model.matrix(productivity_score ~ . - gender - assignments_completed - final_grade, data = data.train)[, -1]
+train.y <- data.train$productivity_score
+test.x <- model.matrix(productivity_score ~ . - gender - assignments_completed - final_grade, data = data.test)[, -1]
+test.y <- data.test$productivity_score
+lasso.train <- glmnet(train.x, train.y, alpha = 1)
+cv.out <- cv.glmnet(train.x, train.y, alpha = 1)
+lasso.lambda <- cv.out$lambda.min
+lasso.lambda
+lasso.pred <- predict(lasso.train, newx = test.x, s = lasso.lambda)
+lasso_mse <- mean((test.y-lasso.pred)^2)
+lasso_mse
+
+x <- model.matrix(productivity_score ~ . - gender - assignments_completed - final_grade, data = data)[, -1]
+y <- data$productivity_score
+lasso.full <- glmnet(x, y, alpha = 1)
+M3 <- predict(lasso.full, type = "coefficients", s = lasso.lambda)[1:14, ]
+M3[M3 != 0]
+```
